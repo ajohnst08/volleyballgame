@@ -1,386 +1,530 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8" />
-<title>Sumo Volleyball – Jump Serve</title>
-<style>
-  /* Keep the exact look you've locked in */
-  html, body { margin:0; height:100%; background:#0f172a; color:#e5e7eb; font-family:sans-serif; user-select:none }
-  #wrap { display:grid; place-items:center; height:100% }
-  canvas { background:linear-gradient(#1e293b 60%, #0b1220); border:2px solid #111827; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.45) }
-  .hud { position:absolute; inset:0; pointer-events:none; display:grid; place-items:start center; padding-top:10px }
-  .row { width:100%; max-width:900px; display:flex; justify-content:space-between; font-weight:700; letter-spacing:.5px; text-shadow:0 2px 6px rgba(0,0,0,.4) }
-  .help { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); font-size:12px; opacity:.85; text-align:center; line-height:1.3 }
-</style>
+    <meta charset="UTF-8" />
+    <title>Sumo Volleyball – Jump Serve</title>
+    <style>
+        /* Keep the exact look you've locked in */
+        html,
+        body {
+            margin: 0;
+            height: 100%;
+            background: #0f172a;
+            color: #e5e7eb;
+            font-family: sans-serif;
+            user-select: none
+        }
+
+        #wrap {
+            display: grid;
+            place-items: center;
+            height: 100%
+        }
+
+        canvas {
+            background: linear-gradient(#1e293b 60%, #0b1220);
+            border: 2px solid #111827;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, .45)
+        }
+
+        .hud {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            display: grid;
+            place-items: start center;
+            padding-top: 10px
+        }
+
+        .row {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            justify-content: space-between;
+            font-weight: 700;
+            letter-spacing: .5px;
+            text-shadow: 0 2px 6px rgba(0, 0, 0, .4)
+        }
+
+        .help {
+            position: absolute;
+            bottom: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            opacity: .85;
+            text-align: center;
+            line-height: 1.3
+        }
+    </style>
 </head>
+
 <body>
-<div id="wrap">
-  <canvas id="game" width="900" height="980"></canvas>
-  <div class="hud">
-    <div class="row">
-      <div id="scoreLeft">You: 0</div>
-      <div id="status">Press Space to Serve</div>
-      <div id="scoreRight">AI: 0</div>
+    <div id="wrap">
+        <canvas id="game" width="900" height="980"></canvas>
+        <div class="hud">
+            <div class="row">
+                <div id="scoreLeft">You: 0</div>
+                <div id="status">Press Space to Serve</div>
+                <div id="scoreRight">AI: 0</div>
+            </div>
+            <div class="help">Controls: ←/A and →/D to move • ↑/W/Space to jump. First to 11 wins.</div>
+        </div>
     </div>
-    <div class="help">Controls: ←/A and →/D to move • ↑/W/Space to jump. First to 11 wins.</div>
-  </div>
-</div>
-<script>
-// =========================
-// Canvas & Rendering Setup
-// =========================
-const canvas = document.getElementById('game');
-const context = canvas.getContext('2d');
+    <script>
+        // =========================
+        // Canvas & Rendering Setup
+        // =========================
+        const canvas = document.getElementById('game');
+        const context = canvas.getContext('2d');
 
-// =========================
-/* World / Tuning Constants */
-// =========================
-const canvasWidth  = canvas.width;
-const canvasHeight = canvas.height;
-const gravity      = 1400;                   // px/s^2
-const floorY       = canvasHeight - 40;      // y position of the floor band
+        // =========================
+        /* World / Tuning Constants */
+        // =========================
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+        const gravity = 1400;                   // px/s^2
+        const floorY = canvasHeight - 40;      // y position of the floor band
+        // Rounded net-top corners (acts like small circular posts at each top corner)
+        const netCornerRadius = 18; // tweak to taste (12–22 feels good)
 
-// Net geometry & bounce behavior
-// - sideBounce: horizontal bounce for side hits
-// - topBounce : vertical bounce gain for landing on the tape (very springy)
-const net = { x: canvasWidth/2 - 6, y: floorY - 180, w: 12, h: 180, sideBounce: 0.8, topBounce: 1.8 };
 
-// Invisible vertical wall above the net center line to prevent crossing while at/above net height
-const netWallX = canvasWidth / 2;
+        // Net geometry & bounce behavior
+        // - sideBounce: horizontal bounce for side hits
+        // - topBounce : vertical bounce gain for landing on the tape (very springy)
+        const net = { x: canvasWidth / 2 - 6, y: floorY - 180, w: 12, h: 180, sideBounce: 0.8, topBounce: 1.8 };
 
-// Entity sizes & movement tuning
-const ballRadius       = 20;
-const playerRadius     = 40;
-const moveAcceleration = 1400;               // slight boost per your request
-const moveDamping      = 0.85;
-const jumpVelocity     = -880;               // high enough to reach net top and bounce
+        // Invisible vertical wall above the net center line to prevent crossing while at/above net height
+        const netWallX = canvasWidth / 2;
 
-// Input map
-let keysDown = {};
-let keysPressed = {};
-let jumpLockout = false; 
+        // Entity sizes & movement tuning
+        const ballRadius = 20;
+        const playerRadius = 40;
+        const moveAcceleration = 1500;
+        const moveDamping = 0.85;
+        const jumpVelocity = -880;               // high enough to reach net top and bounce
 
-// =========================
-/* Input Handling */
-// =========================
-document.addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
-  if (!keysDown[k]) keysPressed[k] = true; 
-  keysDown[k] = true;
-});
-document.addEventListener('keyup',   e => {
-  const k = e.key.toLowerCase();
-  keysDown[k] = false;
-});
+        // =========================
+        /* Input maps */
+        // =========================
+        // keysDown: current held state; keysPressed: "edge" (true only on the frame a key goes down)
+        let keysDown = {};
+        let keysPressed = {}; // populated on keydown, cleared each frame
 
-// =========================
-/* Utilities */
-// =========================
-function clamp(value, min, max){ return Math.max(min, Math.min(max, value)); }
-function rectsOverlap(a, b){
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
+        document.addEventListener('keydown', e => {
+            const k = e.key.toLowerCase();
+            if (!keysDown[k]) keysPressed[k] = true; // edge-detect
+            keysDown[k] = true;
+        });
+        document.addEventListener('keyup', e => {
+            const k = e.key.toLowerCase();
+            keysDown[k] = false;
+        });
 
-// =========================
-/* Entities */
-// =========================
-const playerLeft  =  { x: canvasWidth/4,   y: floorY - playerRadius, vx:0, vy:0, color:'#f87171', isAI:false };
-const playerRight =  { x: canvasWidth*3/4, y: floorY - playerRadius, vx:0, vy:0, color:'#60a5fa', isAI:true  };
+        // =========================
+        /* Utilities */
+        // =========================
+        function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+        function rectsOverlap(a, b) {
+            return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+        }
+        // Reflect velocity off a circular corner using the surface normal.
+        // `entity` must have x,y,vx,vy and `entityRadius` (ball.r or playerRadius).
+        function bounceOffCorner(entity, entityRadius, cornerX, cornerY, cornerRadius, bounciness) {
+            const dx = entity.x - cornerX;
+            const dy = entity.y - cornerY;
+            const dist = Math.hypot(dx, dy);
 
-const ball = { x: canvasWidth/2, y: canvasHeight/2, vx:0, vy:0, r:ballRadius, lastHitBy:null };
+            const minDist = entityRadius + cornerRadius;
+            if (dist === 0) return false; // degenerate; ignore
 
-// =========================
-/* Match State */
-// =========================
-const gameState = {
-  scoreLeft: 0,
-  scoreRight: 0,
-  pointsToWin: 11,
-  server: 'L',          // 'L' or 'R'
-  serving: true,        // true = waiting to serve (Space starts drop)
-  servePhase: 'wait'    // reserved for future use if needed
-};
+            if (dist < minDist) {
+                // Normal from corner -> entity
+                const nx = dx / dist;
+                const ny = dy / dist;
 
-function resetPositions(){
-  playerLeft.x  = canvasWidth/4;   playerLeft.y  = floorY - playerRadius;  playerLeft.vx  = 0; playerLeft.vy  = 0;
-  playerRight.x = canvasWidth*3/4; playerRight.y = floorY - playerRadius; playerRight.vx = 0; playerRight.vy = 0;
-  ball.vx = 0; ball.vy = 0; // ball position stays where it is unless a point is scored
-  if(gameState.serving){
-    ball.x = -100; // off the court  
-    ball.y = -100;
-  }
-}
+                // Push entity out so it doesn't stick inside the corner circle
+                const overlap = minDist - dist;
+                entity.x += nx * overlap;
+                entity.y += ny * overlap;
 
-// =========================
-/* Serve: Vertical Drop */
-// =========================
-// Space triggers a vertical drop just in front of the server, high above their head.
-function startDropServe(){
-  const serverRef      = (gameState.server === 'L') ? playerLeft : playerRight;
-  const serveDirection = (serverRef === playerLeft) ? 10 : -10; // your code: fixed ±10px forward
+                // Only reflect if moving into the corner (velocity has inward component)
+                const vDotN = entity.vx * nx + entity.vy * ny;
+                if (vDotN < 0) {
+                    // Elastic-ish reflection: reverse the normal component and amplify by bounciness
+                    entity.vx -= (1 + bounciness) * vDotN * nx;
+                    entity.vy -= (1 + bounciness) * vDotN * ny;
+                }
+                return true;
+            }
+            return false;
+        }
 
-  // Place ball slightly forward of the server so it contacts naturally on the way down
-  ball.x = clamp(serverRef.x + serveDirection, ballRadius + 2, canvasWidth - ballRadius - 2);
 
-  // Spawn high above the server
-  ball.y = serverRef.y - (playerRadius + ballRadius + 170);
+        // =========================
+        /* Entities */
+        // =========================
+        const playerLeft = { x: canvasWidth / 4, y: floorY - playerRadius, vx: 0, vy: 0, color: '#f87171', isAI: false };
+        const playerRight = { x: canvasWidth * 3 / 4, y: floorY - playerRadius, vx: 0, vy: 0, color: '#60a5fa', isAI: true };
 
-  // Clear motion & touch history
-  ball.vx = 0; ball.vy = 0; ball.lastHitBy = null;
+        const ball = { x: canvasWidth / 2, y: canvasHeight / 2, vx: 0, vy: 0, r: ballRadius, lastHitBy: null };
 
-  gameState.servePhase = 'drop';
-}
+        // =========================
+        /* Match State */
+        // =========================
+        const gameState = {
+            scoreLeft: 0,
+            scoreRight: 0,
+            pointsToWin: 11,
+            server: 'L',          // 'L' or 'R'
+            serving: true,        // true = waiting to serve (Space starts drop)
+            servePhase: 'wait'    // reserved for future use if needed
+        };
 
-// =========================
-/* Net-Top Collision Helpers */
-// =========================
-// Players: land on the tape and bounce straight up (no horizontal carry)
-function bounceOnNetTopForPlayer(playerRef){
-  const topY = net.y;
-  const isWithinNetX = (playerRef.x > net.x) && (playerRef.x < net.x + net.w);
-  const isCrossingTopWhileFalling = (playerRef.vy > 0) &&
-                                   ((playerRef.y - playerRadius) < topY) &&
-                                   ((playerRef.y + playerRadius) >= topY);
-  if(isWithinNetX && isCrossingTopWhileFalling){
-    playerRef.y  = topY - playerRadius;                            // sit on the tape
-    playerRef.vy = -Math.max(Math.abs(playerRef.vy) * net.topBounce,
-                             Math.abs(jumpVelocity) * 0.75);        // big vertical pop
-    playerRef.vx = 0;                                              // vertical-only bounce
-    return true;
-  }
-  return false;
-}
+        // Prevents a jump the instant after serving until jump keys are released
+        let jumpLockout = false;
 
-// Ball: bounce off the tape with strong vertical reflection
-function bounceOnNetTopForBall(ballRef){
-  const topY = net.y;
-  const isWithinNetX = (ballRef.x > net.x) && (ballRef.x < net.x + net.w);
-  const isCrossingTopWhileFalling = (ballRef.vy > 0) &&
-                                   ((ballRef.y - ballRef.r) < topY) &&
-                                   ((ballRef.y + ballRef.r) >= topY);
-  if(isWithinNetX && isCrossingTopWhileFalling){
-    ballRef.y  = topY - ballRef.r;
-    ballRef.vy = -Math.abs(ballRef.vy) * net.topBounce;
-  }
-}
+        function resetBallPosition() {
+            ball.vx = 0; ball.vy = 0; // ball position stays where it is unless a point is scored
+            if (gameState.serving) {
+                ball.x = -100; // off the court
+                ball.y = -100;
+            }
+        }
 
-// Prevent players from crossing the center line while at/above net height
-function constrainPlayerWithCenterWall(playerRef){
-  const topY = net.y;
-  // Only constrain when the player's bottom is at/above the tape
-  if((playerRef.y - playerRadius) <= topY){
-    if(playerRef === playerLeft && playerRef.x + playerRadius > netWallX){
-      playerRef.x = netWallX - playerRadius;
-      if(playerRef.vx > 0) playerRef.vx = 0;
-    }
-    if(playerRef === playerRight && playerRef.x - playerRadius < netWallX){
-      playerRef.x = netWallX + playerRadius;
-      if(playerRef.vx < 0) playerRef.vx = 0;
-    }
-  }
-}
+        function resetPlayerPositions() {
+            playerLeft.x = canvasWidth / 4; playerLeft.y = floorY - playerRadius; playerLeft.vx = 0; playerLeft.vy = 0;
+            playerRight.x = canvasWidth * 3 / 4; playerRight.y = floorY - playerRadius; playerRight.vx = 0; playerRight.vy = 0;
+        }
 
-function jumpKeysHeld(){
-  return !!(keysDown[' '] || keysDown['w'] || keysDown['arrowup']);
-}
+        function resetPositions() {
+            resetBallPosition();
+            resetPlayerPositions();
+        }
 
-// =========================
-/* AI Lobbing Helper */
-// =========================
-// Compute a velocity toward a target point (x,y) with a fixed launch speed.
-// Used to make the AI \"aim\" a skim just above the net height toward your side.
-function setBallVelocityToward(targetX, targetY, launchSpeed){
-  const dx = targetX - ball.x;
-  const dy = targetY - ball.y;
-  const dist = Math.hypot(dx, dy) || 1; // avoid div-by-zero
-  const nx = dx / dist;
-  const ny = dy / dist;
-  ball.vx = nx * launchSpeed;
-  ball.vy = ny * launchSpeed;
-}
+        // =========================
+        /* Serve: Vertical Drop */
+        // =========================
+        // Space triggers a vertical drop just in front of the server, high above their head.
+        function startDropServe() {
+            const serverRef = (gameState.server === 'L') ? playerLeft : playerRight;
+            const serveDirection = (serverRef === playerLeft) ? 15 : -15; // fixed ±10px forward
 
-// =========================
-/* Frame Update (Physics + Input + Rules) */
-// =========================
-function updateFrame(deltaTime){
-  // ---- Input (left player) ----
-  const moveLeft   = keysDown['arrowleft'] || keysDown['a'];
-  const moveRight  = keysDown['arrowright'] || keysDown['d'];
-  const jumpPressed= keysDown['arrowup'] || keysDown['w'] || keysDown[' '];
+            // Place ball slightly forward of the server so it contacts naturally on the way down
+            ball.x = clamp(serverRef.x + serveDirection, ballRadius + 2, canvasWidth - ballRadius - 2);
 
-  // Horizontal movement with acceleration + damping
-  if(moveLeft)  playerLeft.vx -= moveAcceleration * deltaTime;
-  if(moveRight) playerLeft.vx += moveAcceleration * deltaTime;
-  if(!moveLeft && !moveRight) playerLeft.vx *= moveDamping;
+            // Spawn high above the server
+            ball.y = serverRef.y - (playerRadius + ballRadius + 170);
 
-  // Jump only after serve has started (Space during serve is used to start serve, not jump)
-  if(!gameState.serving){
-    if(jumpPressed && playerLeft.y >= floorY - playerRadius)
-    playerLeft.vy = jumpVelocity;
-  }
+            // Clear motion & touch history
+            ball.vx = 0; ball.vy = 0; ball.lastHitBy = null;
 
-  // ---- Simple AI (movement) ----
-  // Keep the tracker feel but (see collision section) AI will *aim lobs* on contact.
-  if(playerRight.isAI && !gameState.serving){
-    if(ball.x > playerRight.x + 5)      playerRight.vx += moveAcceleration * deltaTime;
-    else if(ball.x < playerRight.x - 5) playerRight.vx -= moveAcceleration * deltaTime;
-    else                                playerRight.vx *= moveDamping;
+            gameState.servePhase = 'drop';
+        }
 
-    if(ball.y < floorY - 100 && playerRight.y >= floorY - playerRadius) {
-      playerRight.vy = jumpVelocity;
-    }
-  }
+        // =========================
+        /* Net-Top Collision Helpers */
+        // =========================
+        // Players: land on the tape and bounce straight up (no horizontal carry)
+        function bounceOnNetTopForPlayer(playerRef) {
+            const topY = net.y;
+            const isWithinNetX = (playerRef.x > net.x) && (playerRef.x < net.x + net.w);
+            const isCrossingTopWhileFalling = (playerRef.vy > 0) &&
+                ((playerRef.y - playerRadius) < topY) &&
+                ((playerRef.y + playerRadius) >= topY);
 
-  // ---- Player physics & collisions ----
-  [playerLeft, playerRight].forEach(playerRef => {
-    // Integrate movement
-    playerRef.vy += gravity * deltaTime;
-    playerRef.x  += playerRef.vx * deltaTime;
-    playerRef.y  += playerRef.vy * deltaTime;
+            if (isWithinNetX && isCrossingTopWhileFalling) {
+                playerRef.y = topY - playerRadius;
 
-    // Floor clamp
-    if(playerRef.y > floorY - playerRadius){
-      playerRef.y = floorY - playerRadius;
-      playerRef.vy = 0;
-    }
+                // Fixed bounce speed, with or without 'S'
+                let bounceStrength;
+                if (!playerRef.isAI && keysDown['s']) {
+                    bounceStrength = -1100; // high bounce
+                } else {
+                    bounceStrength = -880; // normal bounce
+                }
 
-    // Side walls clamp
-    playerRef.x = clamp(playerRef.x, playerRadius, canvasWidth - playerRadius);
+                playerRef.vy = bounceStrength; // fixed value, no stacking
+                playerRef.vx = 0;
+                return true;
+            }
+            return false;
+        }
 
-    // Net-top landing first (wins over side)
-    if(!bounceOnNetTopForPlayer(playerRef)){
-      // Net sides (approximate circle vs rect using AABB of circle)
-      const playerAABB = { x: playerRef.x - playerRadius, y: playerRef.y - playerRadius, w: playerRadius*2, h: playerRadius*2 };
-      if(rectsOverlap(playerAABB, net)){
-        if(playerRef.x < canvasWidth/2) playerRef.x = net.x - playerRadius;
-        else                            playerRef.x = net.x + net.w + playerRadius;
-        playerRef.vx = -playerRef.vx * 0.5; // small side bounce
-      }
-    }
+        // Ball: bounce off the tape with strong vertical reflection
+        function bounceOnNetTopForBall(ballRef) {
+            const topY = net.y;
+            const isWithinNetX = (ballRef.x > net.x) && (ballRef.x < net.x + net.w);
+            const isCrossingTopWhileFalling = (ballRef.vy > 0) &&
+                ((ballRef.y - ballRef.r) < topY) &&
+                ((ballRef.y + ballRef.r) >= topY);
+            if (isWithinNetX && isCrossingTopWhileFalling) {
+                ballRef.y = topY - ballRef.r;
+                ballRef.vy = -Math.abs(ballRef.vy) * net.topBounce;
+            }
+        }
 
-    // Invisible wall above net
-    constrainPlayerWithCenterWall(playerRef);
-  });
+        // Prevent players from crossing the center line while at/above net height
+        function constrainPlayerWithCenterWall(playerRef) {
+            const topY = net.y;
+            // Only constrain when the player's bottom is at/above the tape
+            if ((playerRef.y - playerRadius) <= topY) {
+                if (playerRef === playerLeft && playerRef.x + playerRadius > netWallX) {
+                    playerRef.x = netWallX - playerRadius;
+                    if (playerRef.vx > 0) playerRef.vx = 0;
+                }
+                if (playerRef === playerRight && playerRef.x - playerRadius < netWallX) {
+                    playerRef.x = netWallX + playerRadius;
+                    if (playerRef.vx < 0) playerRef.vx = 0;
+                }
+            }
+        }
 
-  // ---- Ball physics ----
-  ball.vy += gravity * deltaTime;
-  ball.x  += ball.vx * deltaTime;
-  ball.y  += ball.vy * deltaTime;
+        // =========================
+        /* AI Lobbing Helper */
+        // =========================
+        function setBallVelocityToward(targetX, targetY, launchSpeed) {
+            const dx = targetX - ball.x;
+            const dy = targetY - ball.y;
+            const dist = Math.hypot(dx, dy) || 1; // avoid div-by-zero
+            const nx = dx / dist;
+            const ny = dy / dist;
+            ball.vx = nx * launchSpeed;
+            ball.vy = ny * launchSpeed;
+        }
 
-  // Floor => instant point (no bounce)
-  if(ball.y > floorY - ball.r){
-    ball.y = floorY - ball.r; ball.vy = 0; ball.vx = 0;
+        // =========================
+        /* Frame Update (Physics + Input + Rules) */
+        // =========================
+        function updateFrame(deltaTime) {
+            // ---- Input (left player) ----
+            const moveLeft = keysDown['arrowleft'] || keysDown['a'];
+            const moveRight = keysDown['arrowright'] || keysDown['d'];
 
-    // Serve miss gives point to the opponent; otherwise point to opponent of last hitter
-    if(gameState.serving){
-      if(gameState.server === 'L') gameState.scoreRight++; else gameState.scoreLeft++;
-    } else {
-      if(ball.lastHitBy === 'L') gameState.scoreLeft++; else gameState.scoreRight++;
-    }
+            const jumpPressed = !!(keysDown[' ']);
 
-    // Next serve from the other side, reset positions
-    gameState.serving = true;
-    gameState.server  = (gameState.server === 'L') ? 'R' : 'L';
-    resetPositions();
-  }
+            // Horizontal movement with acceleration + damping
+            if (moveLeft) playerLeft.vx -= moveAcceleration * deltaTime;
+            if (moveRight) playerLeft.vx += moveAcceleration * deltaTime;
+            if (!moveLeft && !moveRight) playerLeft.vx *= moveDamping;
 
-  // Side walls => reflect horizontally
-  if(ball.x < ball.r || ball.x > canvasWidth - ball.r) ball.vx *= -1;
+            // Jump only after serve has started AND not in lockout (prevents space-serve -> instant jump)
+            if (!gameState.serving && !jumpLockout && jumpPressed && playerLeft.y >= floorY - playerRadius) {
+                playerLeft.vy = jumpVelocity;
+            }
 
-  // Net top bounce (very springy)
-  bounceOnNetTopForBall(ball);
+            // ---- Simple AI (movement) ----
+            if (playerRight.isAI && !gameState.serving) {
+                if (ball.x > playerRight.x + 5) playerRight.vx += moveAcceleration * deltaTime;
+                else if (ball.x < playerRight.x - 5) playerRight.vx -= moveAcceleration * deltaTime;
+                else playerRight.vx *= moveDamping;
 
-  // Net side collision for the ball
-  const ballAABB = { x: ball.x - ball.r, y: ball.y - ball.r, w: ball.r*2, h: ball.r*2 };
-  if(rectsOverlap(ballAABB, net)){
-    if(ball.x < canvasWidth/2) ball.x = net.x - ball.r;
-    else                       ball.x = net.x + net.w + ball.r;
-    ball.vx *= -net.sideBounce;
-  }
+                if (ball.y < floorY - 100 && playerRight.y >= floorY - playerRadius) {
+                    playerRight.vy = jumpVelocity;
+                }
+            }
 
-  // =========================
-  // Ball vs players (contact response)
-  // =========================
-  [playerLeft, playerRight].forEach((playerRef, idx) => {
-    const dx = ball.x - playerRef.x;
-    const dy = ball.y - playerRef.y;
-    const distance = Math.hypot(dx, dy);
-    if(distance < ball.r + playerRadius){
-      // --- AI contact: aim a lob that skims the net ---
-      if (playerRef.isAI) {
-        // Target a point just over the net on the human side; push a little past the tape
-        const targetX = Math.max(ballRadius + 20, net.x - 60);
-        const targetY = net.y - ballRadius - 8; // barely over the tape
-        const lobSpeed = 560;                   // tune: higher = faster/shallower, lower = floatier
-        setBallVelocityToward(targetX, targetY, lobSpeed);
-        ball.lastHitBy = 'R';
-      } else {
-        // --- Human contact: keep your original \"aim away from center\" behavior ---
-        const angle = Math.atan2(dy, dx);
-        const hitSpeed = 650;
-        ball.vx = Math.cos(angle) * hitSpeed;
-        ball.vy = Math.sin(angle) * hitSpeed;
-        ball.lastHitBy = 'L';
-      }
-    }
-  });
+            // ---- Player physics & collisions ----
+            [playerLeft, playerRight].forEach(playerRef => {
+                // Integrate movement
+                playerRef.vy += gravity * deltaTime;
+                playerRef.x += playerRef.vx * deltaTime;
+                playerRef.y += playerRef.vy * deltaTime;
 
-  // Serve trigger: Space starts the drop (not a jump)
-  if(gameState.serving && keysDown[' ']){
-    startDropServe();
-    gameState.serving = false;
-    jumpLockout = true; // block jumping until keys released
-  }
-}
+                // Floor clamp
+                if (playerRef.y > floorY - playerRadius) {
+                    playerRef.y = floorY - playerRadius;
+                    playerRef.vy = 0;
+                }
 
-// =========================
-/* Drawing */
-// =========================
-function drawFrame(){
-  context.clearRect(0, 0, canvasWidth, canvasHeight);
+                // Side walls clamp
+                playerRef.x = clamp(playerRef.x, playerRadius, canvasWidth - playerRadius);
 
-  // Floor
-  context.fillStyle = '#334155';
-  context.fillRect(0, floorY, canvasWidth, canvasHeight - floorY);
+                // Net-top landing first (wins over side)
+                if (!bounceOnNetTopForPlayer(playerRef)) {
+                    // Net sides (approximate circle vs rect using AABB of circle)
+                    const playerAABB = { x: playerRef.x - playerRadius, y: playerRef.y - playerRadius, w: playerRadius * 2, h: playerRadius * 2 };
+                    if (rectsOverlap(playerAABB, net)) {
+                        if (playerRef.x < canvasWidth / 2) playerRef.x = net.x - playerRadius;
+                        else playerRef.x = net.x + net.w + playerRadius;
+                        playerRef.vx = -playerRef.vx * 0.5; // small side bounce
+                    }
+                }
 
-  // Net
-  context.fillStyle = '#94a3b8';
-  context.fillRect(net.x, net.y, net.w, net.h);
+                // Bounce off rounded top corners like posts
+                const leftCornerX = net.x;
+                const rightCornerX = net.x + net.w;
+                const cornerY = net.y;
 
-  // Players
-  [playerLeft, playerRight].forEach(playerRef => {
-    context.beginPath();
-    context.arc(playerRef.x, playerRef.y, playerRadius, 0, Math.PI * 2);
-    context.fillStyle = playerRef.color;
-    context.fill();
-  });
+                let hitCorner = false;
+                hitCorner = bounceOffCorner(playerRef, playerRadius, leftCornerX, cornerY, netCornerRadius, net.topBounce) || hitCorner;
+                hitCorner = bounceOffCorner(playerRef, playerRadius, rightCornerX, cornerY, netCornerRadius, net.topBounce) || hitCorner;
 
-  // Ball
-  context.beginPath();
-  context.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
-  context.fillStyle = '#facc15';
-  context.fill();
+                if (!hitCorner) {
+                    // If we didn't hit a corner, do your existing side AABB push/bounce:
+                    const playerAABB = { x: playerRef.x - playerRadius, y: playerRef.y - playerRadius, w: playerRadius * 2, h: playerRadius * 2 };
+                    if (rectsOverlap(playerAABB, net)) {
+                        if (playerRef.x < canvasWidth / 2) playerRef.x = net.x - playerRadius;
+                        else playerRef.x = net.x + net.w + playerRadius;
+                        playerRef.vx = -playerRef.vx * 0.5; // small side bounce
+                    }
+                }
 
-  // HUD (update scores each frame—cheap but simple)
-  document.getElementById('scoreLeft').textContent  = `You: ${gameState.scoreLeft}`;
-  document.getElementById('scoreRight').textContent = `AI: ${gameState.scoreRight}`;
-}
 
-// =========================
-/* Main Loop */
-// =========================
-let lastTimestamp = 0;
-function gameLoop(timestamp){
-  const deltaTime = (timestamp - lastTimestamp) / 1000;
-  lastTimestamp = timestamp;
-  updateFrame(deltaTime);
-  drawFrame();
-  requestAnimationFrame(gameLoop);
-  keysPressed = {};
-}
+                // Invisible wall above net
+                //(playerRef);
+            });
 
-resetPositions();
-requestAnimationFrame(gameLoop);
-</script>
+            // ---- Ball physics ----
+            ball.vy += gravity * deltaTime;
+            ball.x += ball.vx * deltaTime;
+            ball.y += ball.vy * deltaTime;
+
+            // Floor => instant point (no bounce)
+            if (ball.y > floorY - ball.r) {
+                ball.y = floorY - ball.r; 
+                ball.vy = 0; 
+                ball.vx = 0;
+
+                const landedOnRightSide = ball.x > canvasWidth / 2;
+                const landedOnLeftSide  = !landedOnRightSide;
+
+                if (gameState.serving) {
+                    // Serve miss — point to opponent
+                    if (gameState.server === 'L') gameState.scoreRight++;
+                    else gameState.scoreLeft++;
+                } else {
+                    if (ball.lastHitBy === 'L' && landedOnRightSide) {
+                        gameState.scoreLeft++; // player scores
+                    } else if (ball.lastHitBy === 'R' && landedOnLeftSide) {
+                        gameState.scoreRight++; // AI scores
+                    } else {
+                        // Ball landed on same side as last hitter or no touch — opponent scores
+                        if (landedOnLeftSide) gameState.scoreRight++;
+                        else gameState.scoreLeft++;
+                    }
+                }
+
+                // Next serve from the other side
+                gameState.serving = true;
+                gameState.server = (gameState.server === 'L') ? 'R' : 'L';
+                resetPositions();
+            }
+
+            // Side walls => reflect horizontally
+            if (ball.x < ball.r || ball.x > canvasWidth - ball.r) ball.vx *= -1;
+
+            // Net top bounce (very springy)
+            bounceOnNetTopForBall(ball);
+
+            // Ball vs rounded top corners
+            const leftCornerX = net.x;
+            const rightCornerX = net.x + net.w;
+            const cornerY = net.y;
+
+            let ballHitCorner = false;
+            ballHitCorner = bounceOffCorner(ball, ball.r, leftCornerX, cornerY, netCornerRadius, net.topBounce) || ballHitCorner;
+            ballHitCorner = bounceOffCorner(ball, ball.r, rightCornerX, cornerY, netCornerRadius, net.topBounce) || ballHitCorner;
+
+            if (!ballHitCorner) {
+                // Keep your existing side collision if no corner hit occurred
+                const ballAABB = { x: ball.x - ball.r, y: ball.y - ball.r, w: ball.r * 2, h: ball.r * 2 };
+                if (rectsOverlap(ballAABB, net)) {
+                    if (ball.x < canvasWidth / 2) ball.x = net.x - ball.r;
+                    else ball.x = net.x + net.w + ball.r;
+                    ball.vx *= -net.sideBounce;
+                }
+            }
+
+
+            // Net side collision for the ball
+            const ballAABB = { x: ball.x - ball.r, y: ball.y - ball.r, w: ball.r * 2, h: ball.r * 2 };
+            if (rectsOverlap(ballAABB, net)) {
+                if (ball.x < canvasWidth / 2) ball.x = net.x - ball.r;
+                else ball.x = net.x + net.w + ball.r;
+                ball.vx *= -net.sideBounce;
+            }
+
+            // Ball vs players (contact response)
+            [playerLeft, playerRight].forEach((playerRef, idx) => {
+                const dx = ball.x - playerRef.x;
+                const dy = ball.y - playerRef.y;
+                const distance = Math.hypot(dx, dy);
+                if (distance < ball.r + playerRadius) {
+                    // Human: keep original hit-away behavior
+                    const angle = Math.atan2(dy, dx);
+                    const hitSpeed = 850;
+                    ball.vx = Math.cos(angle) * hitSpeed;
+                    ball.vy = Math.sin(angle) * hitSpeed;
+                    ball.lastHitBy = 'L';
+                    if (playerRef.isAI) {
+                        ball.lastHitBy = 'R';
+                    }
+                }
+            });
+
+            // =========================
+            // Serve trigger (edge-triggered Space)
+            // =========================
+            if (gameState.serving && keysPressed[' ']) {
+                startDropServe();
+                gameState.serving = false;
+            }
+
+            // Clear edge map at end of frame
+            keysPressed = {};
+        }
+
+        // =========================
+        /* Drawing */
+        // =========================
+        function drawFrame() {
+            context.clearRect(0, 0, canvasWidth, canvasHeight);
+
+            // Floor
+            context.fillStyle = '#334155';
+            context.fillRect(0, floorY, canvasWidth, canvasHeight - floorY);
+
+            // Net
+            context.fillStyle = '#94a3b8';
+            context.fillRect(net.x, net.y, net.w, net.h);
+
+            // Players
+            [playerLeft, playerRight].forEach(playerRef => {
+                context.beginPath();
+                context.arc(playerRef.x, playerRef.y, playerRadius, 0, Math.PI * 2);
+                context.fillStyle = playerRef.color;
+                context.fill();
+            });
+
+            // Ball
+            context.beginPath();
+            context.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+            context.fillStyle = '#facc15';
+            context.fill();
+
+            // HUD (update scores each frame—cheap but simple)
+            document.getElementById('scoreLeft').textContent = `You: ${gameState.scoreLeft}`;
+            document.getElementById('scoreRight').textContent = `AI: ${gameState.scoreRight}`;
+        }
+
+        // =========================
+        /* Main Loop */
+        // =========================
+        let lastTimestamp = 0;
+        function gameLoop(timestamp) {
+            const deltaTime = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+            updateFrame(deltaTime);
+            drawFrame();
+            requestAnimationFrame(gameLoop);
+        }
+
+        resetPositions();
+        requestAnimationFrame(gameLoop);
+    </script>
 </body>
+
 </html>
