@@ -105,6 +105,11 @@
         const moveAcceleration = 1500;
         const moveDamping = 0.85;
         const jumpVelocity = -880;               // high enough to reach net top and bounce
+        // --- AI tuning ---
+        const aiApproachOffset = playerRadius * 0.8; // stand slightly off-center of the ball
+        const aiReactDistanceX = 140;                // when within this X-range, plan a hit
+        const aiJumpHeightMargin = 30;                 // headroom above AI top before it decides to jump
+
 
         // =========================
         /* Input maps */
@@ -295,6 +300,35 @@
             ball.vy = ny * launchSpeed;
         }
 
+        // Decide if AI needs to jump to meet the current ball height
+        function aiNeedsJump(playerRef, targetBallY) {
+            const comfortableReachY = (playerRef.y - playerRadius) - aiJumpHeightMargin; // a bit above AI's head
+            // If the bottom of the ball is above our comfortable reach, we need to jump
+            return (targetBallY + ball.r) < comfortableReachY;
+        }
+
+        // Which side of the ball should AI stand on?
+        // AI is on the right court:
+        // - LOB plan: stand to the RIGHT of the ball so the natural hit sends it LEFT over the net
+        // - BANK plan: stand to the LEFT of the ball so the natural hit sends it RIGHT into the back wall
+        function aiDesiredStandXForPlan(plan) {
+            if (plan === 'bank') return ball.x - aiApproachOffset; // send rightward
+            return ball.x + aiApproachOffset;                      // default/lob: send leftward
+        }
+
+        // Choose a plan based on ball position (no change to hit physics — this only moves the AI)
+        function aiChoosePlan() {
+            // If ball is deep on AI side and below net top → prefer a lob across
+            if (ball.x > canvasWidth * 0.62 && ball.y > net.y + 30) return 'lob';
+            // If ball is high and far right → try to bank it off the right wall
+            if (ball.x > canvasWidth * 0.70 && ball.y < net.y - 20) return 'bank';
+            // If we’re close enough in X to make a play, default to lob
+            if (Math.abs(ball.x - playerRight.x) < aiReactDistanceX) return 'lob';
+            // Otherwise just track toward a reasonable spot
+            return 'track';
+        }
+
+
         // =========================
         /* Frame Update (Physics + Input + Rules) */
         // =========================
@@ -315,16 +349,28 @@
                 playerLeft.vy = jumpVelocity;
             }
 
-            // ---- Simple AI (movement) ----
+            // ---- Smarter AI (movement & jump only-if-needed) ----
             if (playerRight.isAI && !gameState.serving) {
-                if (ball.x > playerRight.x + 5) playerRight.vx += moveAcceleration * deltaTime;
-                else if (ball.x < playerRight.x - 5) playerRight.vx -= moveAcceleration * deltaTime;
+                // pick a plan: 'lob', 'bank', or 'track'
+                const plan = aiChoosePlan();
+
+                // stand slightly to the chosen side of the ball so the natural bounce sends it where we want
+                const standX = aiDesiredStandXForPlan(plan);
+
+                // move horizontally toward standX using your same acceleration/damping feel
+                if (standX > playerRight.x + 6) playerRight.vx += moveAcceleration * deltaTime;
+                else if (standX < playerRight.x - 6) playerRight.vx -= moveAcceleration * deltaTime;
                 else playerRight.vx *= moveDamping;
 
-                if (ball.y < floorY - 100 && playerRight.y >= floorY - playerRadius) {
+                // only jump if the ball is too high to reach from the ground AND we’re roughly aligned
+                const needJump = aiNeedsJump(playerRight, ball.y);
+                const horizontallyAligned = Math.abs(playerRight.x - standX) < 22;
+
+                if (needJump && horizontallyAligned && playerRight.y >= floorY - playerRadius) {
                     playerRight.vy = jumpVelocity;
                 }
             }
+
 
             // ---- Player physics & collisions ----
             [playerLeft, playerRight].forEach(playerRef => {
@@ -378,75 +424,75 @@
             });
 
             // ---- Ball physics ----
-            ball.vy += gravity * deltaTime;
-            ball.x += ball.vx * deltaTime;
-            ball.y += ball.vy * deltaTime;
+            if (!gameState.serving) {
+                ball.vy += gravity * deltaTime;
+                ball.x += ball.vx * deltaTime;
+                ball.y += ball.vy * deltaTime;
 
-            // Floor => instant point (no bounce)
-            if (ball.y > floorY - ball.r) {
-                ball.y = floorY - ball.r; 
-                ball.vy = 0; 
-                ball.vx = 0;
+                // Floor => instant point (no bounce)
+                if (ball.y > floorY - ball.r) {
+                    ball.y = floorY - ball.r;
+                    ball.vy = 0;
+                    ball.vx = 0;
 
-                const landedOnRightSide = ball.x > canvasWidth / 2;
-                const landedOnLeftSide  = !landedOnRightSide;
+                    const landedOnRightSide = ball.x > canvasWidth / 2;
+                    const landedOnLeftSide = !landedOnRightSide;
 
-                if (gameState.serving) {
-                    // Serve miss — point to opponent
-                    if (gameState.server === 'L') gameState.scoreRight++;
-                    else gameState.scoreLeft++;
-                } else {
-                    if (ball.lastHitBy === 'L' && landedOnRightSide) {
-                        gameState.scoreLeft++; // player scores
-                    } else if (ball.lastHitBy === 'R' && landedOnLeftSide) {
-                        gameState.scoreRight++; // AI scores
-                    } else {
-                        // Ball landed on same side as last hitter or no touch — opponent scores
-                        if (landedOnLeftSide) gameState.scoreRight++;
+                    if (gameState.serving) {
+                        // Serve miss — point to opponent
+                        if (gameState.server === 'L') gameState.scoreRight++;
                         else gameState.scoreLeft++;
+                    } else {
+                        if (ball.lastHitBy === 'L' && landedOnRightSide) {
+                            gameState.scoreLeft++; // player scores
+                        } else if (ball.lastHitBy === 'R' && landedOnLeftSide) {
+                            gameState.scoreRight++; // AI scores
+                        } else {
+                            // Ball landed on same side as last hitter or no touch — opponent scores
+                            if (landedOnLeftSide) gameState.scoreRight++;
+                            else gameState.scoreLeft++;
+                        }
+                    }
+
+                    // Next serve from the other side
+                    gameState.serving = true;
+                    gameState.server = (gameState.server === 'L') ? 'R' : 'L';
+                    resetPositions();
+                }
+
+                // Side walls => reflect & clamp inside
+                if (ball.x < ball.r) {
+                    ball.x = ball.r;
+                    if (ball.vx < 0) ball.vx = -ball.vx;
+                }
+                if (ball.x > canvasWidth - ball.r) {
+                    ball.x = canvasWidth - ball.r;
+                    if (ball.vx > 0) ball.vx = -ball.vx;
+                }
+
+
+                // Net top bounce (very springy)
+                bounceOnNetTopForBall(ball);
+
+                // Ball vs rounded top corners
+                const leftCornerX = net.x;
+                const rightCornerX = net.x + net.w;
+                const cornerY = net.y;
+
+                let ballHitCorner = false;
+                ballHitCorner = bounceOffCorner(ball, ball.r, leftCornerX, cornerY, netCornerRadius, net.topBounce) || ballHitCorner;
+                ballHitCorner = bounceOffCorner(ball, ball.r, rightCornerX, cornerY, netCornerRadius, net.topBounce) || ballHitCorner;
+
+                if (!ballHitCorner) {
+                    // Keep your existing side collision if no corner hit occurred
+                    const ballAABB = { x: ball.x - ball.r, y: ball.y - ball.r, w: ball.r * 2, h: ball.r * 2 };
+                    if (rectsOverlap(ballAABB, net)) {
+                        if (ball.x < canvasWidth / 2) ball.x = net.x - ball.r;
+                        else ball.x = net.x + net.w + ball.r;
+                        ball.vx *= -net.sideBounce;
                     }
                 }
-
-                // Next serve from the other side
-                gameState.serving = true;
-                gameState.server = (gameState.server === 'L') ? 'R' : 'L';
-                resetPositions();
             }
-
-            // Side walls => reflect horizontally
-            if (ball.x < ball.r || ball.x > canvasWidth - ball.r) ball.vx *= -1;
-
-            // Net top bounce (very springy)
-            bounceOnNetTopForBall(ball);
-
-            // Ball vs rounded top corners
-            const leftCornerX = net.x;
-            const rightCornerX = net.x + net.w;
-            const cornerY = net.y;
-
-            let ballHitCorner = false;
-            ballHitCorner = bounceOffCorner(ball, ball.r, leftCornerX, cornerY, netCornerRadius, net.topBounce) || ballHitCorner;
-            ballHitCorner = bounceOffCorner(ball, ball.r, rightCornerX, cornerY, netCornerRadius, net.topBounce) || ballHitCorner;
-
-            if (!ballHitCorner) {
-                // Keep your existing side collision if no corner hit occurred
-                const ballAABB = { x: ball.x - ball.r, y: ball.y - ball.r, w: ball.r * 2, h: ball.r * 2 };
-                if (rectsOverlap(ballAABB, net)) {
-                    if (ball.x < canvasWidth / 2) ball.x = net.x - ball.r;
-                    else ball.x = net.x + net.w + ball.r;
-                    ball.vx *= -net.sideBounce;
-                }
-            }
-
-
-            // Net side collision for the ball
-            const ballAABB = { x: ball.x - ball.r, y: ball.y - ball.r, w: ball.r * 2, h: ball.r * 2 };
-            if (rectsOverlap(ballAABB, net)) {
-                if (ball.x < canvasWidth / 2) ball.x = net.x - ball.r;
-                else ball.x = net.x + net.w + ball.r;
-                ball.vx *= -net.sideBounce;
-            }
-
             // Ball vs players (contact response)
             [playerLeft, playerRight].forEach((playerRef, idx) => {
                 const dx = ball.x - playerRef.x;
@@ -505,6 +551,7 @@
             context.fillStyle = '#facc15';
             context.fill();
 
+
             // HUD (update scores each frame—cheap but simple)
             document.getElementById('scoreLeft').textContent = `You: ${gameState.scoreLeft}`;
             document.getElementById('scoreRight').textContent = `AI: ${gameState.scoreRight}`;
@@ -515,12 +562,17 @@
         // =========================
         let lastTimestamp = 0;
         function gameLoop(timestamp) {
-            const deltaTime = (timestamp - lastTimestamp) / 1000;
+            let deltaTime = (timestamp - lastTimestamp) / 1000;
             lastTimestamp = timestamp;
+
+            // Cap to ~33ms/frame to avoid tunneling after tab is inactive
+            if (deltaTime > 0.033) deltaTime = 0.033;
+
             updateFrame(deltaTime);
             drawFrame();
             requestAnimationFrame(gameLoop);
         }
+
 
         resetPositions();
         requestAnimationFrame(gameLoop);
